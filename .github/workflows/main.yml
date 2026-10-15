@@ -1,0 +1,19 @@
+name: Development Build
+on:
+  push:
+    branches:
+    - main
+jobs:
+  build:
+    name: Build
+    strategy:
+      matrix:
+        target: [armv7-unknown-linux-musleabihf]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v7
+    - name: Install additional Rust target
+      run: rustup target add ${{ matrix.target }}
+    - name: Build
+      run: cargo install --root . --path . --target ${{ matrix.target }}
