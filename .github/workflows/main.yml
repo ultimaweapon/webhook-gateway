@@ -5,7 +5,7 @@ on:
     - main
 jobs:
   build:
-    name: Build
+    name: Build (Linux ARM)
     strategy:
       matrix:
         target: [armv7-unknown-linux-musleabihf]
@@ -13,6 +13,10 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v7
+    - name: Install cross-compilation toolchain
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-arm-linux-gnueabihf
     - name: Install additional Rust target
       run: rustup target add ${{ matrix.target }}
     - name: Build
