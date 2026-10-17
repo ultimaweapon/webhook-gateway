@@ -12,6 +12,8 @@ http = "1.5.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["http1", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+instant-acme = { version = "0.8.5", features = ["hyper-rustls", "ring"], default-features = false }
+minicbor-serde = { version = "0.7.1", features = ["std"] }
 rustls = { version = "0.23.46", default-features = false }
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["macros", "net", "rt", "signal"] }
