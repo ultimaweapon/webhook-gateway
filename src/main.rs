@@ -27,6 +27,9 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+#[cfg(unix)]
+mod unix;
+
 fn main() -> ExitCode {
     // Build Tokio runtime.
     let args = Args::parse();
@@ -247,6 +250,11 @@ impl App {
 
 #[derive(Parser)]
 struct Args {
+    /// User to drop privileges to.
+    #[cfg(unix)]
+    #[arg(long)]
+    uid: Option<self::unix::Uid>,
+
     /// Port to listen for webhooks.
     port: NonZero<u16>,
 }

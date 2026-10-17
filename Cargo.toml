@@ -18,6 +18,9 @@ tokio = { version = "1.53.3", features = ["macros", "net", "rt", "signal"] }
 tokio-rustls = { version = "0.26.6", features = ["ring", "tls12"], default-features = false }
 tokio-util = { version = "0.7.20", features = ["rt"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
+
 [profile.dev]
 panic = "abort"
 
