@@ -8,5 +8,9 @@ erdp = "0.2.1"
 futures = { version = "0.3.34", features = ["async-await"], default-features = false }
 tokio = { version = "1.53.3", features = ["macros", "rt", "signal"] }
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
+panic = "abort"
 strip = "symbols"
