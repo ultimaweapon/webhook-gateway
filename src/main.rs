@@ -76,6 +76,37 @@ impl App {
             return v;
         }
 
+        // Create HTTP server.
+        let ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let addr = SocketAddr::new(ip, self.args.port.into());
+        let server = match TcpListener::bind(&addr).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Failed to start HTTP server on {}: {}.", addr, e.display());
+                return ExitCode::FAILURE;
+            }
+        };
+
+        // Drop privilege.
+        #[cfg(unix)]
+        if let Some(uid) = &self.args.uid {
+            let uid = match uid.resolve() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Failed to resolve user {}: {}.", uid, e.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            if unsafe { libc::setuid(uid) < 0 } {
+                let e = std::io::Error::last_os_error();
+
+                eprintln!("Failed to change UID to {}: {}.", uid, e.display());
+
+                return ExitCode::FAILURE;
+            }
+        }
+
         // Load TLS certificate.
         let crt = PathBuf::from_iter(["etc", "webhook-gateway", "tls-crt.pem"]);
         let key = PathBuf::from_iter(["etc", "webhook-gateway", "tls-key.pem"]);
@@ -113,21 +144,10 @@ impl App {
         drop(key);
         drop(crt);
 
-        // Create HTTP server.
-        let ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let addr = SocketAddr::new(ip, self.args.port.into());
-        let server = match TcpListener::bind(&addr).await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Failed to start HTTP server on {}: {}.", addr, e.display());
-                return ExitCode::FAILURE;
-            }
-        };
-
-        println!("Listening for webhooks on {addr}.");
-
         // Configure HTTP server.
         let http = hyper::server::conn::http1::Builder::new();
+
+        println!("Listening for webhooks on {addr}.");
 
         // Dispatch events.
         let http = Rc::new(http);
