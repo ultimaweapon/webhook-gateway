@@ -4,12 +4,20 @@ use futures::poll;
 use http::{Request, Response};
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
+use rustls::ServerConfig;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::convert::Infallible;
+use std::fs::File;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::pin;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::task::Poll;
+use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
@@ -57,6 +65,40 @@ impl App {
         if let Poll::Ready(v) = poll!(exit.as_mut()) {
             return v;
         }
+
+        // Load TLS certificate.
+        let crt = PathBuf::from_iter(["etc", "webhook-gateway", "tls-crt.pem"]);
+        let key = PathBuf::from_iter(["etc", "webhook-gateway", "tls-key.pem"]);
+        let tls = match (File::open(crt.as_path()), File::open(key.as_path())) {
+            (Ok(c), Ok(k)) => match Self::load_tls(c, k) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!(
+                        "Failed to build TLS acceptor from {} and {}: {}.",
+                        crt.display(),
+                        key.display(),
+                        e.display()
+                    );
+
+                    return ExitCode::FAILURE;
+                }
+            },
+            (Ok(_), Err(e)) => {
+                eprintln!("Failed to open {}: {}.", key.display(), e.display());
+                return ExitCode::FAILURE;
+            }
+            (Err(e), Ok(_)) => {
+                eprintln!("Failed to open {}: {}.", crt.display(), e.display());
+                return ExitCode::FAILURE;
+            }
+            (Err(c), Err(k)) => match (c.kind(), k.kind()) {
+                (ErrorKind::NotFound, ErrorKind::NotFound) => todo!(),
+                _ => {
+                    eprintln!("Failed to open {}: {}.", crt.display(), c.display());
+                    return ExitCode::FAILURE;
+                }
+            },
+        };
 
         // Dispatch events.
         let exit = loop {
@@ -133,4 +175,40 @@ impl App {
     ) -> Result<Response<Full<Bytes>>, Infallible> {
         Ok(Response::new(Full::new(Bytes::new())))
     }
+
+    fn load_tls(crt: File, key: File) -> Result<TlsAcceptor, TlsError> {
+        // Load certificate.
+        let mut chain = Vec::new();
+
+        for (i, crt) in CertificateDer::pem_reader_iter(crt).enumerate() {
+            match crt {
+                Ok(v) => chain.push(v),
+                Err(e) => return Err(TlsError::LoadCert(i, e)),
+            }
+        }
+
+        // Load private key.
+        let key = PrivateKeyDer::from_pem_reader(key).map_err(TlsError::LoadKey)?;
+        let mut config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(chain, key)
+            .map_err(TlsError::BuildAcceptor)?;
+
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+        Ok(Arc::new(config).into())
+    }
+}
+
+/// Error of [App::load_tls()].
+#[derive(Debug, Error)]
+enum TlsError {
+    #[error("couldn't load certificate #{0}")]
+    LoadCert(usize, #[source] rustls::pki_types::pem::Error),
+
+    #[error("couldn't load private key")]
+    LoadKey(#[source] rustls::pki_types::pem::Error),
+
+    #[error(transparent)]
+    BuildAcceptor(rustls::Error),
 }
