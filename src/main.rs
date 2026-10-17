@@ -89,6 +89,33 @@ impl App {
 
         // Drop privilege.
         #[cfg(unix)]
+        if let Some(gid) = &self.args.gid {
+            let gid = match gid.resolve() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Failed to resolve group {}: {}.", gid, e.display());
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            if unsafe { libc::setgroups(0, [].as_ptr()) < 0 } {
+                let e = std::io::Error::last_os_error();
+
+                eprintln!("Failed to drop supplementary groups: {}.", e.display());
+
+                return ExitCode::FAILURE;
+            }
+
+            if unsafe { libc::setgid(gid) < 0 } {
+                let e = std::io::Error::last_os_error();
+
+                eprintln!("Failed to change GID to {}: {}.", gid, e.display());
+
+                return ExitCode::FAILURE;
+            }
+        }
+
+        #[cfg(unix)]
         if let Some(uid) = &self.args.uid {
             let uid = match uid.resolve() {
                 Ok(v) => v,
@@ -274,6 +301,11 @@ struct Args {
     #[cfg(unix)]
     #[arg(long)]
     uid: Option<self::unix::Uid>,
+
+    /// Group to drop privileges to.
+    #[cfg(unix)]
+    #[arg(long)]
+    gid: Option<self::unix::Gid>,
 
     /// Port to listen for webhooks.
     port: NonZero<u16>,
