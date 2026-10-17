@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use clap::Parser;
 use erdp::ErrorDisplay;
 use futures::poll;
 use http::{Request, Response};
@@ -25,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 fn main() -> ExitCode {
     // Build Tokio runtime.
+    let args = Args::parse();
     let tokio = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build_local(Default::default())
@@ -199,6 +201,9 @@ impl App {
         Ok(Arc::new(config).into())
     }
 }
+
+#[derive(Parser)]
+struct Args {}
 
 /// Error of [App::load_tls()].
 #[derive(Debug, Error)]
