@@ -16,7 +16,7 @@ rustls = { version = "0.23.46", default-features = false }
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["macros", "net", "rt", "signal"] }
 tokio-rustls = { version = "0.26.6", features = ["ring", "tls12"], default-features = false }
-tokio-util = "0.7.20"
+tokio-util = { version = "0.7.20", features = ["rt"] }
 
 [profile.dev]
 panic = "abort"

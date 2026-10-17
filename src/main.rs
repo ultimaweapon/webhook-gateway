@@ -22,8 +22,10 @@ use std::task::Poll;
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
+use tokio::task::yield_now;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn main() -> ExitCode {
     // Build Tokio runtime.
@@ -76,7 +78,7 @@ impl App {
         let key = PathBuf::from_iter(["etc", "webhook-gateway", "tls-key.pem"]);
         let tls = match (File::open(crt.as_path()), File::open(key.as_path())) {
             (Ok(c), Ok(k)) => match Self::load_tls(c, k) {
-                Ok(v) => Some(v),
+                Ok(v) => v,
                 Err(e) => {
                     eprintln!(
                         "Failed to build TLS acceptor from {} and {}: {}.",
@@ -105,6 +107,9 @@ impl App {
             },
         };
 
+        drop(key);
+        drop(crt);
+
         // Create HTTP server.
         let ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let addr = SocketAddr::new(ip, self.args.port.into());
@@ -118,13 +123,35 @@ impl App {
 
         println!("Listening for webhooks on {addr}.");
 
+        // Configure HTTP server.
+        let http = hyper::server::conn::http1::Builder::new();
+
         // Dispatch events.
+        let http = Rc::new(http);
+        let tasks = TaskTracker::new();
         let exit = loop {
             select! {
                 biased;
                 v = &mut exit => break v,
+                v = server.accept() => match v {
+                    Ok((sock, addr)) => drop(tasks.spawn_local(self.clone().dispatch_http(sock, addr, tls.clone(), http.clone()))),
+                    Err(e) => eprintln!("Failed to accept HTTP connection: {}.", e.display()),
+                }
             }
+
+            yield_now().await;
         };
+
+        self.running.cancel();
+
+        drop(server);
+        drop(http);
+        drop(tls);
+
+        println!("Waiting for {} tasks to shutdown.", tasks.len());
+
+        tasks.close();
+        tasks.wait().await;
 
         exit
     }
