@@ -1,3 +1,2 @@
 [target.armv7-unknown-linux-musleabihf]
-rustflags = ["-C", "force-unwind-tables=no"]
 linker = "arm-linux-gnueabihf-gcc"
