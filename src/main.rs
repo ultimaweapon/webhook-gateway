@@ -107,7 +107,10 @@ async fn run(args: Args) -> ExitCode {
             let url = "https://acme-v02.api.letsencrypt.org/directory";
             let (acc, cred) = match acme.create(&req, url.into(), None).await {
                 Ok(v) => v,
-                Err(e) => todo!(),
+                Err(e) => {
+                    eprintln!("Failed to create ACME account: {}.", e.display());
+                    return ExitCode::FAILURE;
+                }
             };
 
             // Save credentials.
@@ -125,7 +128,10 @@ async fn run(args: Args) -> ExitCode {
 
             acc
         }
-        Err(e) => todo!(),
+        Err(e) => {
+            eprintln!("Failed to read {}: {}.", path.display(), e.display());
+            return ExitCode::FAILURE;
+        }
     };
 
     drop(path);
