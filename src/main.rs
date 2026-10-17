@@ -11,7 +11,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::convert::Infallible;
 use std::fs::File;
 use std::io::ErrorKind;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZero;
 use std::path::PathBuf;
 use std::pin::pin;
 use std::process::ExitCode;
@@ -19,7 +20,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::task::Poll;
 use thiserror::Error;
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
@@ -40,6 +41,7 @@ fn main() -> ExitCode {
 
     // Run.
     let app = Rc::new(App {
+        args,
         running: CancellationToken::new(),
     });
 
@@ -48,6 +50,7 @@ fn main() -> ExitCode {
 
 /// Global states for the program.
 struct App {
+    args: Args,
     running: CancellationToken,
 }
 
@@ -101,6 +104,19 @@ impl App {
                 }
             },
         };
+
+        // Create HTTP server.
+        let ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let addr = SocketAddr::new(ip, self.args.port.into());
+        let server = match TcpListener::bind(&addr).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Failed to start HTTP server on {}: {}.", addr, e.display());
+                return ExitCode::FAILURE;
+            }
+        };
+
+        println!("Listening for webhooks on {addr}.");
 
         // Dispatch events.
         let exit = loop {
@@ -203,7 +219,10 @@ impl App {
 }
 
 #[derive(Parser)]
-struct Args {}
+struct Args {
+    /// Port to listen for webhooks.
+    port: NonZero<u16>,
+}
 
 /// Error of [App::load_tls()].
 #[derive(Debug, Error)]
