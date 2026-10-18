@@ -90,7 +90,7 @@ impl Dns01 for &Route53 {
         }
 
         // Wait for previous record to expire.
-        sleep(Duration::from_secs(120)).await;
+        sleep(Duration::from_mins(5)).await;
 
         Ok(RetryPolicy::new().timeout(Duration::from_mins(3)))
     }
