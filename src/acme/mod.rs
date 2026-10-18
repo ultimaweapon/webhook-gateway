@@ -10,7 +10,7 @@ use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use instant_acme::{
     Account, AuthorizationHandle, AuthorizationStatus, AuthorizedIdentifier, ChallengeType,
-    Identifier, NewOrder, OrderStatus,
+    Identifier, NewOrder, OrderStatus, RetryPolicy,
 };
 use std::convert::Infallible;
 use std::io::ErrorKind;
@@ -22,6 +22,7 @@ use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
 use tokio::task::yield_now;
+use tokio::time::sleep_until;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -142,22 +143,25 @@ impl Acme {
             }
 
             // Start challenge.
-            match &self.challenge {
+            let retry = match &self.challenge {
                 Challenge::Http01(v) => Self::challenge_http_01(v, auth)
                     .await
                     .map_err(|e| OrderError::Challenge("http-01", e))?,
                 Challenge::Dns01(DnsServer::Aws(v)) => Self::challenge_dns_01(v, auth)
                     .await
                     .map_err(|e| OrderError::Challenge("dns-01", e))?,
-            }
+            };
 
             drop(auths);
 
             // Wait for ready.
-            match order.poll_ready(&Default::default()).await {
-                Ok(OrderStatus::Ready) => (),
-                Ok(v) => return Err(OrderError::UnexpectedOrderStatus(v)),
-                Err(e) => return Err(OrderError::RetrieveOrderStatus(e)),
+            loop {
+                match order.poll_ready(&retry).await {
+                    Ok(OrderStatus::Ready) => break,
+                    Ok(v) => return Err(OrderError::UnexpectedOrderStatus(v)),
+                    Err(instant_acme::Error::Timeout(Some(v))) => sleep_until(v.into()).await,
+                    Err(e) => return Err(OrderError::RetrieveOrderStatus(e)),
+                }
             }
 
             break;
@@ -179,7 +183,7 @@ impl Acme {
     async fn challenge_http_01(
         challenges: &HttpChallenges,
         mut auth: AuthorizationHandle<'_>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<RetryPolicy, Box<dyn std::error::Error>> {
         // Add to list.
         let mut challenge = auth
             .challenge(ChallengeType::Http01)
@@ -200,30 +204,30 @@ impl Acme {
             return Err(e.into());
         }
 
-        Ok(())
+        Ok(RetryPolicy::new())
     }
 
     async fn challenge_dns_01<T: Dns01>(
         server: T,
         mut auth: AuthorizationHandle<'_>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<RetryPolicy, Box<dyn std::error::Error>> {
         // Set DNS record.
         let mut challenge = auth
             .challenge(ChallengeType::Dns01)
             .ok_or_else(|| "the challenge is not available")?;
         let domain = challenge.identifier();
         let key = challenge.key_authorization().dns_value();
-
-        if let Err(e) = server.set_auth(domain, key).await {
-            return Err(erdp::wrap("couldn't set key authorization", e).into());
-        }
+        let retry = match server.set_auth(domain, key).await {
+            Ok(v) => v,
+            Err(e) => return Err(erdp::wrap("couldn't set key authorization", e).into()),
+        };
 
         // Start.
         if let Err(e) = challenge.set_ready().await {
             return Err(erdp::wrap("couldn't start the challenge", e).into());
         }
 
-        Ok(())
+        Ok(retry)
     }
 
     async fn run_http(
@@ -353,7 +357,7 @@ trait Dns01 {
         self,
         domain: &AuthorizedIdentifier,
         data: String,
-    ) -> impl Future<Output = Result<(), Self::Err>>;
+    ) -> impl Future<Output = Result<RetryPolicy, Self::Err>>;
 }
 
 /// Error of [Acme::new()].

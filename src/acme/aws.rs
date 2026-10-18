@@ -5,7 +5,7 @@ use aws_sdk_route53::operation::get_change::GetChangeError;
 use aws_sdk_route53::types::{
     Change, ChangeAction, ChangeBatch, ChangeStatus, ResourceRecord, ResourceRecordSet, RrType,
 };
-use instant_acme::AuthorizedIdentifier;
+use instant_acme::{AuthorizedIdentifier, RetryPolicy};
 use std::rc::Rc;
 use std::time::Duration;
 use thiserror::Error;
@@ -34,7 +34,7 @@ impl Dns01 for &Route53 {
         self,
         domain: &AuthorizedIdentifier<'_>,
         mut data: String,
-    ) -> Result<(), Self::Err> {
+    ) -> Result<RetryPolicy, Self::Err> {
         // Quote the value.
         data.insert(0, '"');
         data.push('"');
@@ -89,7 +89,7 @@ impl Dns01 for &Route53 {
             }
         }
 
-        Ok(())
+        Ok(RetryPolicy::new().timeout(Duration::from_mins(3)))
     }
 }
 
