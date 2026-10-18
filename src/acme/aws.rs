@@ -29,8 +29,13 @@ impl Dns01 for &Route53 {
     async fn set_auth(
         self,
         domain: &AuthorizedIdentifier<'_>,
-        data: String,
+        mut data: String,
     ) -> Result<(), Self::Err> {
+        // Quote the value.
+        data.insert(0, '"');
+        data.push('"');
+
+        // Create update for record.
         let record = ResourceRecordSet::builder()
             .name(format!("_acme-challenge.{domain}"))
             .r#type(RrType::Txt)
