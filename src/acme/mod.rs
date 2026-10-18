@@ -158,7 +158,12 @@ impl Acme {
             loop {
                 match order.poll_ready(&retry).await {
                     Ok(OrderStatus::Ready) => break,
-                    Ok(v) => return Err(OrderError::UnexpectedOrderStatus(v)),
+                    Ok(v) => {
+                        return Err(OrderError::UnexpectedOrderStatus(
+                            v,
+                            order.state().error.as_ref().and_then(|v| v.detail.clone()),
+                        ));
+                    }
                     Err(instant_acme::Error::Timeout(Some(v))) => sleep_until(v.into()).await,
                     Err(e) => return Err(OrderError::RetrieveOrderStatus(e)),
                 }
@@ -400,8 +405,8 @@ pub enum OrderError {
     #[error("couldn't retrieve order status")]
     RetrieveOrderStatus(#[source] instant_acme::Error),
 
-    #[error("unexpected order status {0:?}")]
-    UnexpectedOrderStatus(OrderStatus),
+    #[error("unexpected order status {0:?} (detail: {1:?})")]
+    UnexpectedOrderStatus(OrderStatus, Option<String>),
 
     #[error("couldn't retrieve private key")]
     RetrievePrivateKey(#[source] instant_acme::Error),
