@@ -215,7 +215,7 @@ impl Acme {
         let key = challenge.key_authorization().dns_value();
 
         if let Err(e) = server.set_auth(domain, key).await {
-            return Err(erdp::wrap("couldn't create DNS record", e).into());
+            return Err(erdp::wrap("couldn't set key authorization", e).into());
         }
 
         // Start.
