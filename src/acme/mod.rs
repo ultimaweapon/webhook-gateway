@@ -1,6 +1,7 @@
 use self::aws::Route53;
 use self::http_01::HttpChallenges;
 use crate::config::{AcmeChallenge, AcmeConfig, AcmeDns01};
+use aws_smithy_http_client::tls::rustls_provider::CryptoMode;
 use bytes::Bytes;
 use erdp::ErrorDisplay;
 use http::header::ALLOW;
@@ -108,7 +109,11 @@ impl Acme {
                 Challenge::Http01(challenges)
             }
             AcmeChallenge::Dns01(AcmeDns01::Aws { hosted_zone }) => {
-                let config = aws_config::load_from_env().await;
+                let crypto = CryptoMode::Ring;
+                let http = aws_smithy_http_client::Builder::new()
+                    .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(crypto))
+                    .build_https();
+                let config = aws_config::from_env().http_client(http).load().await;
                 let client = aws_sdk_route53::Client::new(&config);
 
                 Challenge::Dns01(DnsServer::Aws(Route53::new(client, hosted_zone.clone())))
