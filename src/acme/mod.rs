@@ -1,5 +1,6 @@
+use self::aws::Route53;
 use self::http_01::HttpChallenges;
-use crate::config::{AcmeChallenge, AcmeConfig};
+use crate::config::{AcmeChallenge, AcmeConfig, AcmeDns01};
 use bytes::Bytes;
 use erdp::ErrorDisplay;
 use http::header::ALLOW;
@@ -7,8 +8,8 @@ use http::{HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
 use instant_acme::{
-    Account, AuthorizationHandle, AuthorizationStatus, ChallengeType, Identifier, NewOrder,
-    OrderStatus,
+    Account, AuthorizationHandle, AuthorizationStatus, AuthorizedIdentifier, ChallengeType,
+    Identifier, NewOrder, OrderStatus,
 };
 use std::convert::Infallible;
 use std::io::ErrorKind;
@@ -23,6 +24,7 @@ use tokio::task::yield_now;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+mod aws;
 mod http_01;
 
 /// Provides methods to request TLS certificate from ACME provider.
@@ -105,7 +107,12 @@ impl Acme {
 
                 Challenge::Http01(challenges)
             }
-            AcmeChallenge::Dns01 => todo!(),
+            AcmeChallenge::Dns01(AcmeDns01::Aws { hosted_zone }) => {
+                let config = aws_config::load_from_env().await;
+                let client = aws_sdk_route53::Client::new(&config);
+
+                Challenge::Dns01(DnsServer::Aws(Route53::new(client, hosted_zone.clone())))
+            }
         };
 
         Ok(Self { account, challenge })
@@ -131,9 +138,12 @@ impl Acme {
 
             // Start challenge.
             match &self.challenge {
-                Challenge::Http01(challenges) => Self::challenge_http_01(challenges, auth)
+                Challenge::Http01(v) => Self::challenge_http_01(v, auth)
                     .await
                     .map_err(|e| OrderError::Challenge("http-01", e))?,
+                Challenge::Dns01(DnsServer::Aws(v)) => Self::challenge_dns_01(v, auth)
+                    .await
+                    .map_err(|e| OrderError::Challenge("dns-01", e))?,
             }
 
             drop(auths);
@@ -183,6 +193,29 @@ impl Acme {
             challenges.remove(&path);
 
             return Err(e.into());
+        }
+
+        Ok(())
+    }
+
+    async fn challenge_dns_01<T: Dns01>(
+        server: T,
+        mut auth: AuthorizationHandle<'_>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Set DNS record.
+        let mut challenge = auth
+            .challenge(ChallengeType::Dns01)
+            .ok_or_else(|| "the challenge is not available")?;
+        let domain = challenge.identifier();
+        let key = challenge.key_authorization().dns_value();
+
+        if let Err(e) = server.set_auth(domain, key).await {
+            return Err(erdp::wrap("couldn't create DNS record", e).into());
+        }
+
+        // Start.
+        if let Err(e) = challenge.set_ready().await {
+            return Err(erdp::wrap("couldn't start the challenge", e).into());
         }
 
         Ok(())
@@ -299,6 +332,23 @@ impl Acme {
 /// Contains data required for ACME challenge.
 enum Challenge {
     Http01(Rc<HttpChallenges>),
+    Dns01(DnsServer),
+}
+
+/// Encapsulates DNS client.
+enum DnsServer {
+    Aws(Route53),
+}
+
+/// Provides method to update DNS record.
+trait Dns01 {
+    type Err: std::error::Error + 'static;
+
+    fn set_auth(
+        self,
+        domain: &AuthorizedIdentifier,
+        data: String,
+    ) -> impl Future<Output = Result<(), Self::Err>>;
 }
 
 /// Error of [Acme::new()].

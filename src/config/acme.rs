@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::rc::Rc;
 
 /// Configuration for ACME.
 #[derive(Deserialize)]
@@ -25,5 +26,12 @@ pub enum AcmeChallenge {
     #[serde(rename = "http-01")]
     Http01,
     #[serde(rename = "dns-01")]
-    Dns01,
+    Dns01(AcmeDns01),
+}
+
+/// Configuration for `dns-01` challenge.
+#[derive(Deserialize)]
+#[serde(tag = "server", rename_all = "kebab-case")]
+pub enum AcmeDns01 {
+    Aws { hosted_zone: Rc<str> },
 }
