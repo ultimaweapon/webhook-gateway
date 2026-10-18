@@ -41,7 +41,7 @@ impl Dns01 for &Route53 {
 
         // Create update for record.
         let record = ResourceRecordSet::builder()
-            .name(format!("_acme-challenge.{domain}"))
+            .name(format!("_acme-challenge.{domain}."))
             .r#type(RrType::Txt)
             .ttl(60)
             .resource_records(ResourceRecord::builder().value(data).build().unwrap())
@@ -90,7 +90,7 @@ impl Dns01 for &Route53 {
         }
 
         // Wait for previous record to expire.
-        sleep(Duration::from_secs(60)).await;
+        sleep(Duration::from_secs(120)).await;
 
         Ok(RetryPolicy::new().timeout(Duration::from_mins(3)))
     }
