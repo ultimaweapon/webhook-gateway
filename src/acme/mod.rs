@@ -1,4 +1,3 @@
-use self::aws::Route53;
 use self::http_01::HttpChallenges;
 use crate::config::{AcmeChallenge, AcmeConfig, AcmeDns01};
 use aws_smithy_http_client::tls::rustls_provider::CryptoMode;
@@ -8,10 +7,7 @@ use http::header::ALLOW;
 use http::{HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
-use instant_acme::{
-    Account, AuthorizationHandle, AuthorizationStatus, AuthorizedIdentifier, ChallengeType,
-    Identifier, NewOrder, OrderStatus, RetryPolicy,
-};
+use instant_acme::{Account, AuthorizationStatus, Identifier, NewOrder, OrderStatus, RetryPolicy};
 use std::convert::Infallible;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -26,7 +22,7 @@ use tokio::time::sleep_until;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-mod aws;
+mod dns_01;
 mod http_01;
 
 /// Provides methods to request TLS certificate from ACME provider.
@@ -117,14 +113,17 @@ impl Acme {
                 let config = aws_config::from_env().http_client(http).load().await;
                 let client = aws_sdk_route53::Client::new(&config);
 
-                Challenge::Dns01(DnsServer::Aws(Route53::new(client, hosted_zone.clone())))
+                Challenge::Dns01(DnsServer::Aws(crate::dns::Route53::new(
+                    client,
+                    hosted_zone.clone(),
+                )))
             }
         };
 
         Ok(Self { account, challenge })
     }
 
-    pub async fn order(&self, domain: &str) -> Result<(String, String), OrderError> {
+    pub async fn order(&self, domain: &str) -> Result<OrderedItem, OrderError> {
         // Create new order.
         let mut order = self
             .account
@@ -143,11 +142,11 @@ impl Acme {
             }
 
             // Start challenge.
-            let retry = match &self.challenge {
-                Challenge::Http01(v) => Self::challenge_http_01(v, auth)
+            let h = match &self.challenge {
+                Challenge::Http01(v) => self::http_01::challenge(v, auth)
                     .await
                     .map_err(|e| OrderError::Challenge("http-01", e))?,
-                Challenge::Dns01(DnsServer::Aws(v)) => Self::challenge_dns_01(v, auth)
+                Challenge::Dns01(DnsServer::Aws(v)) => self::dns_01::challenge(v, auth)
                     .await
                     .map_err(|e| OrderError::Challenge("dns-01", e))?,
             };
@@ -156,7 +155,7 @@ impl Acme {
 
             // Wait for ready.
             loop {
-                match order.poll_ready(&retry).await {
+                match order.poll_ready(h.retry_policy()).await {
                     Ok(OrderStatus::Ready) => break,
                     Ok(v) => {
                         return Err(OrderError::UnexpectedOrderStatus(
@@ -182,57 +181,7 @@ impl Acme {
             .await
             .map_err(OrderError::RetrieveCert)?;
 
-        Ok((crt, key))
-    }
-
-    async fn challenge_http_01(
-        challenges: &HttpChallenges,
-        mut auth: AuthorizationHandle<'_>,
-    ) -> Result<RetryPolicy, Box<dyn std::error::Error>> {
-        // Add to list.
-        let mut challenge = auth
-            .challenge(ChallengeType::Http01)
-            .ok_or_else(|| "the challenge is not available")?;
-        let path = format!("/.well-known/acme-challenge/{}", challenge.token);
-        let resp = challenge.key_authorization();
-
-        if !challenges.insert(path.clone(), resp) {
-            return Err("challenge with the same token already exists".into());
-        }
-
-        // Start.
-        if let Err(e) = challenge.set_ready().await {
-            let e = erdp::wrap("couldn't start the challenge", e);
-
-            challenges.remove(&path);
-
-            return Err(e.into());
-        }
-
-        Ok(RetryPolicy::new())
-    }
-
-    async fn challenge_dns_01<T: Dns01>(
-        server: T,
-        mut auth: AuthorizationHandle<'_>,
-    ) -> Result<RetryPolicy, Box<dyn std::error::Error>> {
-        // Set DNS record.
-        let mut challenge = auth
-            .challenge(ChallengeType::Dns01)
-            .ok_or_else(|| "the challenge is not available")?;
-        let domain = challenge.identifier();
-        let key = challenge.key_authorization().dns_value();
-        let retry = match server.set_auth(domain, key).await {
-            Ok(v) => v,
-            Err(e) => return Err(erdp::wrap("couldn't set key authorization", e).into()),
-        };
-
-        // Start.
-        if let Err(e) = challenge.set_ready().await {
-            return Err(erdp::wrap("couldn't start the challenge", e).into());
-        }
-
-        Ok(retry)
+        Ok(OrderedItem { crt, key })
     }
 
     async fn run_http(
@@ -334,7 +283,7 @@ impl Acme {
         }
 
         // Get challenge.
-        match challenges.remove(req.uri().path()) {
+        match challenges.get(req.uri().path()) {
             Some(k) => *resp.body_mut() = Full::new(Bytes::copy_from_slice(k.as_str().as_bytes())),
             None => *resp.status_mut() = StatusCode::NOT_FOUND,
         }
@@ -351,18 +300,18 @@ enum Challenge {
 
 /// Encapsulates DNS client.
 enum DnsServer {
-    Aws(Route53),
+    Aws(crate::dns::Route53),
 }
 
-/// Provides method to update DNS record.
-trait Dns01 {
-    type Err: std::error::Error + 'static;
+/// Object that live until ACME challenge completed.
+trait ChallengeHandler {
+    fn retry_policy(&self) -> &RetryPolicy;
+}
 
-    fn set_auth(
-        self,
-        domain: &AuthorizedIdentifier,
-        data: String,
-    ) -> impl Future<Output = Result<RetryPolicy, Self::Err>>;
+/// Result of [Acme::order()].
+pub struct OrderedItem {
+    pub crt: String,
+    pub key: String,
 }
 
 /// Error of [Acme::new()].

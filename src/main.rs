@@ -30,6 +30,7 @@ use tokio_util::task::TaskTracker;
 
 mod acme;
 mod config;
+mod dns;
 #[cfg(unix)]
 mod unix;
 
@@ -74,8 +75,6 @@ fn main() -> ExitCode {
         let r = run(args, Rc::new(config), &tasks, &running).await;
 
         running.cancel();
-
-        println!("Waiting for {} tasks to shutdown.", tasks.len());
 
         tasks.close();
         tasks.wait().await;
@@ -196,36 +195,8 @@ async fn run(
                     config.acme.directory_url
                 );
 
-                // Create file for certificate now to see it we can write it.
-                let mut crt = match File::options()
-                    .create_new(true)
-                    .read(true)
-                    .write(true)
-                    .open(cp.as_path())
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("Failed to create {}: {}.", cp.display(), e.display());
-                        return ExitCode::FAILURE;
-                    }
-                };
-
-                // Create file for private key now to see it we can write it.
-                let mut key = match File::options()
-                    .create_new(true)
-                    .read(true)
-                    .write(true)
-                    .open(kp.as_path())
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        eprintln!("Failed to create {}: {}.", kp.display(), e.display());
-                        return ExitCode::FAILURE;
-                    }
-                };
-
                 // Request certificate.
-                let r = match acme.order(&config.acme.domain).await {
+                let i = match acme.order(&config.acme.domain).await {
                     Ok(v) => v,
                     Err(e) => {
                         eprintln!(
@@ -238,19 +209,51 @@ async fn run(
                     }
                 };
 
-                if let Err(e) = key.write_all(r.1.as_bytes()) {
-                    eprintln!("Failed to write {}: {}.", kp.display(), e.display());
+                // Write private key.
+                let path = kp.as_path();
+                let mut key = match File::options()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(path)
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Failed to create {}: {}.", path.display(), e.display());
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                if let Err(e) = key.write_all(i.key.as_bytes()) {
+                    eprintln!("Failed to write {}: {}.", path.display(), e.display());
                     return ExitCode::FAILURE;
                 } else if let Err(e) = key.rewind() {
-                    eprintln!("Failed to seek {}: {}.", kp.display(), e.display());
+                    eprintln!("Failed to seek {}: {}.", path.display(), e.display());
                     return ExitCode::FAILURE;
                 }
 
-                if let Err(e) = crt.write_all(r.0.as_bytes()) {
-                    eprintln!("Failed to write {}: {}.", cp.display(), e.display());
+                // Write certificate.
+                let path = cp.as_path();
+                let mut crt = match File::options()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(path)
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Failed to create {}: {}.", path.display(), e.display());
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                if let Err(e) = crt.write_all(i.crt.as_bytes()) {
+                    eprintln!("Failed to write {}: {}.", path.display(), e.display());
                     return ExitCode::FAILURE;
                 } else if let Err(e) = crt.rewind() {
-                    eprintln!("Failed to seek {}: {}.", cp.display(), e.display());
+                    eprintln!("Failed to seek {}: {}.", path.display(), e.display());
                     return ExitCode::FAILURE;
                 }
 

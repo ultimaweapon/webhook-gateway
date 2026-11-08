@@ -1,17 +1,16 @@
-use super::Dns01;
+use super::ServerClient;
 use aws_sdk_route53::error::SdkError;
 use aws_sdk_route53::operation::change_resource_record_sets::ChangeResourceRecordSetsError;
 use aws_sdk_route53::operation::get_change::GetChangeError;
 use aws_sdk_route53::types::{
     Change, ChangeAction, ChangeBatch, ChangeStatus, ResourceRecord, ResourceRecordSet, RrType,
 };
-use instant_acme::{AuthorizedIdentifier, RetryPolicy};
 use std::rc::Rc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
 
-/// Implementation of [Dns01] for AWS route 53.
+/// Implementation of [ServerClient] for AWS route 53.
 pub struct Route53 {
     client: aws_sdk_route53::Client,
     hosted_zone: Rc<str>,
@@ -27,24 +26,16 @@ impl Route53 {
     }
 }
 
-impl Dns01 for &Route53 {
+impl ServerClient for Route53 {
     type Err = Route53Error;
 
-    async fn set_auth(
-        self,
-        domain: &AuthorizedIdentifier<'_>,
-        mut data: String,
-    ) -> Result<RetryPolicy, Self::Err> {
-        // Quote the value.
-        data.insert(0, '"');
-        data.push('"');
-
+    async fn set_txt(&self, fqdn: &str, value: &str, ttl: u32) -> Result<(), Self::Err> {
         // Create update for record.
         let record = ResourceRecordSet::builder()
-            .name(format!("_acme-challenge.{domain}."))
+            .name(fqdn)
             .r#type(RrType::Txt)
-            .ttl(60)
-            .resource_records(ResourceRecord::builder().value(data).build().unwrap())
+            .ttl(ttl.into())
+            .resource_records(ResourceRecord::builder().value(value).build().unwrap())
             .build()
             .unwrap();
 
@@ -89,14 +80,14 @@ impl Dns01 for &Route53 {
             }
         }
 
-        Ok(RetryPolicy::new())
+        Ok(())
     }
 }
 
-/// Implementation of [Dns01::Err] for [Route53].
+/// Implementation of [ServerClient::Err] for [Route53].
 #[derive(Debug, Error)]
 pub enum Route53Error {
-    #[error("couldn't create TXT record")]
+    #[error("couldn't create the record")]
     CreateRecord(#[source] SdkError<ChangeResourceRecordSetsError>),
 
     #[error("missing ChangeInfo from ChangeResourceRecordSets")]
