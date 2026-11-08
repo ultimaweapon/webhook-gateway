@@ -7,6 +7,7 @@ use futures::poll;
 use http::{Request, Response};
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
+use instant_acme::CertificateIdentifier;
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -267,7 +268,7 @@ async fn run(
     };
 
     // Load TLS certificate.
-    let tls = match load_tls(crt, key) {
+    let (tls, id) = match load_tls(crt, key) {
         Ok(v) => v,
         Err(e) => {
             eprintln!(
@@ -361,7 +362,10 @@ async fn dispatch_webhook(
     Ok(Response::new(Full::new(Bytes::new())))
 }
 
-fn load_tls(crt: File, key: File) -> Result<TlsAcceptor, TlsError> {
+fn load_tls(
+    crt: File,
+    key: File,
+) -> Result<(TlsAcceptor, CertificateIdentifier<'static>), TlsError> {
     // Load certificate.
     let mut chain = Vec::new();
 
@@ -372,6 +376,10 @@ fn load_tls(crt: File, key: File) -> Result<TlsAcceptor, TlsError> {
         }
     }
 
+    // Get ID.
+    let id = chain.first().ok_or(TlsError::NoCert)?;
+    let id = CertificateIdentifier::try_from(id).map_err(|e| TlsError::GetId(e.into()))?;
+
     // Load private key.
     let key = PrivateKeyDer::from_pem_reader(key).map_err(TlsError::LoadKey)?;
     let mut config = ServerConfig::builder()
@@ -381,7 +389,7 @@ fn load_tls(crt: File, key: File) -> Result<TlsAcceptor, TlsError> {
 
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
-    Ok(Arc::new(config).into())
+    Ok((Arc::new(config).into(), id))
 }
 
 #[derive(Parser)]
@@ -402,6 +410,12 @@ struct Args {
 enum TlsError {
     #[error("couldn't load certificate #{0}")]
     LoadCert(usize, #[source] rustls::pki_types::pem::Error),
+
+    #[error("no any certificates in the file")]
+    NoCert,
+
+    #[error("couldn't get certificate identifier")]
+    GetId(#[source] Box<dyn std::error::Error>),
 
     #[error("couldn't load private key")]
     LoadKey(#[source] rustls::pki_types::pem::Error),

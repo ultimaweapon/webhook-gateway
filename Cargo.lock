@@ -1092,6 +1092,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "x509-parser",
 ]
 
 [[package]]
