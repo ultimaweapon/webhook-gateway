@@ -6,6 +6,7 @@ use erdp::ErrorDisplay;
 use futures::poll;
 use http::{Request, Response};
 use http_body_util::Full;
+use humantime::format_duration;
 use hyper_util::rt::TokioIo;
 use instant_acme::CertificateIdentifier;
 use rustls::ServerConfig;
@@ -284,6 +285,26 @@ async fn run(
 
     drop(kp);
     drop(cp);
+
+    // Get certificate renewal.
+    let (renew, update) = match acme.get_renewal(&id).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "Failed to get certificate renewal information: {}.",
+                e.display()
+            );
+
+            return ExitCode::FAILURE;
+        }
+    };
+
+    println!(
+        "The certificate will be renew between {} and {}. Next checking in {}.",
+        renew.suggested_window.start,
+        renew.suggested_window.end,
+        format_duration(update)
+    );
 
     // Dispatch events.
     println!("Listening for webhooks on {addr}.");

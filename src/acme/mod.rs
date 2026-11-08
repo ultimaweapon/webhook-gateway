@@ -7,13 +7,17 @@ use http::header::ALLOW;
 use http::{HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper_util::rt::TokioIo;
-use instant_acme::{Account, AuthorizationStatus, Identifier, NewOrder, OrderStatus, RetryPolicy};
+use instant_acme::{
+    Account, AuthorizationStatus, CertificateIdentifier, Identifier, NewOrder, OrderStatus,
+    RenewalInfo, RetryPolicy,
+};
 use std::convert::Infallible;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::pin;
 use std::rc::Rc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::select;
@@ -182,6 +186,14 @@ impl Acme {
             .map_err(OrderError::RetrieveCert)?;
 
         Ok(OrderedItem { crt, key })
+    }
+
+    #[inline]
+    pub fn get_renewal(
+        &self,
+        id: &CertificateIdentifier<'_>,
+    ) -> impl Future<Output = Result<(RenewalInfo, Duration), instant_acme::Error>> {
+        self.account.renewal_info(id)
     }
 
     async fn run_http(
